@@ -1,18 +1,12 @@
 export AddHawkes
 
-struct AddHawkes <: ParametricModel
+struct AddHawkes <: ParametricTemporalModel
     I::Interval
     f
     ∫f
     ∫If::Real
 
-    function AddHawkes(I::Tuple{Real, Real}, f, ∫f=nothing, ∫If=nothing)
-        I, ∫f, ∫If = initialize(I, f, ∫f, ∫If)
-        new(I, f, ∫f, ∫If)
-    end
-
-    AddHawkes(a::Real, b::Real, f, ∫f=nothing, ∫If=nothing) = 
-        AddHawkes((a, b), f, ∫f, ∫If)
+    AddHawkes(args...) = initialize(args...)
 end
 
 function simulate(model::AddHawkes, params::Parameters{4})
@@ -25,9 +19,9 @@ function simulate(model::AddHawkes, params::Parameters{4})
                                       params[4])])
 end
 
-estimate(model::AddHawkes, events::Events) = estimate(model, events, zeros(length(events)), zeros(length(events)))
+estimate(model::AddHawkes, events::Times) = estimate(model, events, zeros(length(events)), zeros(length(events)))
 
-function estimate(model::AddHawkes, events::Events, lambda_events::Events, f_times::Events) 
+function estimate(model::AddHawkes, events::Times, lambda_events::Times, f_times::Times) 
     N          = length(events)
     N == 0 && return (0.0, 0.0, 0.0, 0.0)
     T          = model.I.b[1] - model.I.a[1]
@@ -74,12 +68,14 @@ function estimate(model::AddHawkes, events::Events, lambda_events::Events, f_tim
             β * (N / T))
 end
 
-function time_transform(model::AddHawkes, params::Parameters{4}, events::Events)
-    return time_transform(HH(I), (params.μ, params.α, params.β), events) .+
-           time_transform(IP(I, model.f, model.∫f, model.∫If), (0.0, params.γ), events)
+function rescaling!(model::AddHawkes, params::Parameters{4}, events::Times)
+    IP_transf, IP_T = rescaling(IP(I, model.f, model.∫f, model.∫If), (0.0, params.γ), events)
+    HH_T = rescaling!(HH(model.I), (params[1], parmas[3], params[4]), events)
+    events .+= IP_transf
+    return IP_T + HH_T
 end
 
-function CIF(model::AddHawkes, params::Parameters{4}, events::Events)
+function CIF(model::AddHawkes, params::Parameters{4}, events::Times)
     sort!(events)
     function cif(t)
         activation = t < events ? 0 : sum(exp.(params[3] .* (@view events[events .< t])))
@@ -97,7 +93,7 @@ end
 #     return ∫base + +∫f + ∫self
 # end
 
-function min_max_CIF(model::AddHawkes, params::Parameters{4}, events::Events)
+function min_max_CIF(model::AddHawkes, params::Parameters{4}, events::Times)
     M = 0
     for i in eachindex(events)
         temp = sum(exp.(-params[4] * (events[i] - events[1:i])))
@@ -108,7 +104,7 @@ end
 
 
 
-# function simulate!(model::AddHawkes, params::Parameters{4}, events::Events)
+# function simulate!(model::AddHawkes, params::Parameters{4}, events::Times)
 #     N_base = simulate!(IP(model.I, model.f, model.∫f, model.∫If), (params[1], params[2]), events)
 #     N_desc = generate_descendants!(events, N_base, model.I.b, params[3], params[4])
 #     return N_desc

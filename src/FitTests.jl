@@ -58,7 +58,7 @@ end
 
 function reynaud2014(model::ParametricModel, events::Events)
     params    = estimate(model, events) # Estimate parameters via MLE
-    transf, _ = time_transform(model, params, events)
+    transf, _ = rescaling(model, params, events)
     n_S       = round(Int, (length(transf) - 1)^(2/3))
     S         = sample(diff(transf), n_S, replace=false)
     return pvalue(ExactOneSampleKSTest(S, Exponential()))

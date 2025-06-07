@@ -1,18 +1,12 @@
 export AddPoisson
 
-struct AddPoisson <: ParametricModel
+struct AddPoisson <: ParametricTemporalModel
     I::Interval
     f
     ∫f
     ∫If::Real
 
-    function AddPoisson(I::Tuple{Real, Real}, f, ∫f=nothing, ∫If=nothing)
-        I, ∫f, ∫If = initialize(I, f, ∫f, ∫If)
-        new(I, f, ∫f, ∫If)
-    end
-
-    AddPoisson(a::Real, b::Real, f, ∫f=nothing, ∫If=nothing) =
-        AddPoisson((a, b), f, ∫f, ∫If)
+    AddPoisson(args...) = initialize(args...)
 end
 
 function simulate(model::AddPoisson, params::Parameters{2})
@@ -20,15 +14,15 @@ function simulate(model::AddPoisson, params::Parameters{2})
         thinning(simulate(params[2], model.I), model.f)])
 end
 
-function estimate(model::AddPoisson, events::Events)
+function estimate(model::AddPoisson, events::Times)
     isempty(events) && return (0.0, 0.0)
     f_times   = model.f.(events)
     initial_x = [length(f_times) / measure(model.I), length(f_times) / measure(model.I)]
     lower     = [0.0, 0.0]
     upper     = [Inf, Inf]
-    results   = optimize(x -> objective_ip(x, f_times, model.∫If, measure(model.I)),
-                         (stor, x) -> gradient_ip!(stor, x, f_times, model.∫If, measure(model.I)),
-                         (stor, x) -> hessian_ip!(stor, x, f_times),
+    results   = optimize(x -> objective_ap(x, f_times, model.∫If, measure(model.I)),
+                         (stor, x) -> gradient_ap!(stor, x, f_times, model.∫If, measure(model.I)),
+                         (stor, x) -> hessian_ap!(stor, x, f_times),
                          lower,
                          upper,
                          initial_x,
@@ -36,31 +30,25 @@ function estimate(model::AddPoisson, events::Events)
     return (Optim.minimizer(results)[1], Optim.minimizer(results)[2])
 end
 
-function objective_ip(x, f_times, ∫f, M)
+function objective_ap(x, f_times, ∫f, M)
     return (x[1] .* M) + (x[2] .* ∫f) - # integral of the CIF 
            sum(log.(x[1] .+ (x[2] .* f_times))) # Sum of log of f at event times
 end
 
-function gradient_ip!(storage, x, f_times, ∫f, M)
+function gradient_ap!(storage, x, f_times, ∫f, M)
     storage[1] = M - sum(1.0 ./ (x[1] .+ (x[2] .* f_times)))
     storage[2] = ∫f - sum(f_times ./ (x[1] .+ (x[2] .* f_times)))
 end
 
-function hessian_ip!(storage, x, f_times)
+function hessian_ap!(storage, x, f_times)
     storage[1, 1] = sum(1.0 ./ ((x[1] .+ (x[2] .* f_times))) .^ 2.0)
     storage[1, 2] = sum(f_times ./ ((x[1] .+ (x[2] .* f_times))) .^ 2.0)
     storage[2, 1] = storage[1, 2]
     storage[2, 2] = sum((f_times .^ 2) ./ ((x[1] .+ (x[2] .* f_times))) .^ 2.0)
 end
 
-function time_transform(model::AddPoisson, params::Parameters{2}, events::Events)
-    transf, T = time_transform(params[1], events, model.I)
-    transf  .+= (params[2] * model.∫f.(model.I[1], events))
-    return transf, T + (params[2] * model.∫If)
-end
-
-function time_transform!(model::AddPoisson, params::Parameters{2}, events::Events)
-    T           = time_transform!(params[1], events, model.I)
+function rescaling!(model::AddPoisson, params::Parameters{2}, events::Times)
+    T           = rescaling!(params[1], events, model.I)
     @. events .+= (params[2] * model.∫f.(model.I[1], events))
     return T + (params[2] * model.∫If)
 end
@@ -76,7 +64,7 @@ end
 
 
 
-# function simulate!(model::AddPoisson, params::Parameters{2}, sim::Events)
+# function simulate!(model::AddPoisson, params::Parameters{2}, sim::Times)
 #     n_const = simulate!(params[1], model.I, sim)
 #     n_f     = simulate!(params[2], model.I, (@view sim[n_const+1: end]))
 #     n_f     = thinning!((@view sim[n_const+1: n_const+n_f]), model.f)

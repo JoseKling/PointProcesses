@@ -1,10 +1,9 @@
 export LinearCharge
 
-struct LinearCharge <: ParametricModel
+struct LinearCharge <: ParametricTemporalModel
     I::Interval
 
-    LinearCharge(I::Tuple{Real, Real}) = new(convert_interval(I))
-    LinearCharge(a::Real, b::Real) = LinearCharge((a, b))
+    LinearCharge(arg...) = new(convert_interval(arg...))
 end
 
 function simulate(model::LinearCharge, params::Parameters{3})
@@ -28,7 +27,7 @@ function simulate(model::LinearCharge, params::Parameters{3})
     return events
 end
 
-function estimate(model::LinearCharge, events::Events)
+function estimate(model::LinearCharge, events::Times)
     isempty(events) && return (0.0, 0.0)
     initial_x = [length(events) / measure(model.I), rand(), rand() + 1]
     vec       = map(x -> x[1], events)
@@ -88,7 +87,10 @@ function hessian_charge!(storage, x, ev, a, b)
     storage[3, 2] = storage[2, 3]
 end
 
-function CIF(model::LinearCharge, params::Parameters{3}, events::Events)
+# function rescaling!(model::LinearCharge, params::Parameters{3}, events::Times)
+# end
+
+function CIF(model::LinearCharge, params::Parameters{3}, events::Times)
     λt_i = zeros(length(events))
     λt_i[1] = params[1] .+ (params[3] .* events[1][1])
     for i in 2:length(events)
@@ -105,7 +107,7 @@ function CIF(model::LinearCharge, params::Parameters{3}, events::Events)
     return f
 end
 
-function ∫CIF(model::LinearCharge, params::Parameters{3}, events::Events)
+function ∫CIF(model::LinearCharge, params::Parameters{3}, events::Times)
     a   = model.I.a[1]
     b   = model.I.b[1]
     vec = sort(map(x -> x[1], events))
