@@ -1,36 +1,19 @@
-export AddHawkes
-
-struct AddHawkes <: ParametricTemporalModel
-    I::Interval
-    f
-    ∫f
-    ∫If::Real
-
-    AddHawkes(args...) = initialize(args...)
+function simulate(model::AddHawkes, region::Interval)
+    sim = simulate(model.μ, region)
+    append!(sim, thinning(simulate(model.γ, region), model.α))
+    append!(sim, generate_descendants(sim, region[2], model.α, model.β))
+    sort!(sim)
+    return TPP(sim, region)
 end
 
-function simulate(model::AddHawkes, params::Parameters{4})
-    sim_base = [simulate(params[1], model.I);
-                thinning(simulate(params[2], model.I), model.f)]
-    return sort!([sim_base;
-                 generate_descendants(sim_base,
-                                      model.I.b,
-                                      params[3],
-                                      params[4])])
-end
-
-estimate(model::AddHawkes, events::Times) = estimate(model, events, zeros(length(events)), zeros(length(events)))
-
-function estimate(model::AddHawkes, events::Times, lambda_events::Times, f_times::Times) 
-    N          = length(events)
-    N == 0 && return (0.0, 0.0, 0.0, 0.0)
-    T          = model.I.b[1] - model.I.a[1]
-    events   .*= (N / T) # Average inter-event time equal to 1. Numerical stability
-    step_tol   = 1e-4
-    max_iter   = 500
+function estimate(model::AddHawkes, tpp::TPP; step_tol=1e-3, max_iter=500) 
+    N          = length(tpp.times)
+    N == 0 && return AddHawkes((0.0, 0.0, 0.0, 0.0))
+    T          = measure(tpp.region)
+    norm_ts    = tpp.times .* (N / T) # Average inter-event time equal to 1. Numerical stability
     c1         = 0.2 + (0.6 * rand())
     c2         = 0.1 + (0.8 * rand())
-    f_times   .= model.f.(events) # Calculate the f at event times
+    f_times   .= model.f.(tpp.times) # Calculate the f at event times
     μ, γ, ψ, β = (c1 / 2, c1 / 2, (1.0 - c1), log(10.0) * c2) # ψ is the branching factor, α = ψ * β
     iter       = 0
     error      = step_tol + 1.0 # Initial error is larger than tolerance
@@ -38,7 +21,7 @@ function estimate(model::AddHawkes, events::Times, lambda_events::Times, f_times
         iter  = iter + 1
         lambda_events[1] = 0.0
         @inbounds for i in 2:N
-            lambda_events[i] = exp(β * (events[i] - events[i-1])) * (1 + lambda_events[i-1])
+            lambda_events[i] = exp(β * (norm_ts[i] - norm_ts[i-1])) * (1 + lambda_events[i-1])
         end
         @. lambda_events = (μ + (γ * f_times)) + (ψ * β * lambda_events)
         D      = 0.0 # Expected number of descendants
@@ -48,7 +31,7 @@ function estimate(model::AddHawkes, events::Times, lambda_events::Times, f_times
         @inbounds for i in 2:N # Go through each event calculating the probabilities of being an immigrant or a descendant
             D_i  = 0.0 # Probability that t_i is a descendant
             @inbounds for j in 1:i-1
-                diffs = events[i] - events[j]
+                diffs = norm_ts[i] - norm_ts[j]
                 D_ij  = (ψ * β * exp(β * diffs)) / lambda_events[i] # Probability t_i is a descendant of t_j
                 div  += (diffs * D_ij)
                 D_i  += D_ij
@@ -61,51 +44,26 @@ function estimate(model::AddHawkes, events::Times, lambda_events::Times, f_times
         μ, γ, ψ, β = I_base / N, ((I - I_base) * T) / (model.∫If * N), D / N, D / div # Update parameters for the next iteration
     end
     iter >= max_iter && @warn("Maximum number of iterations reached without convergence.") 
-    events .*= (T / N) # Unnormalize events to original scale
-    return (μ * (N / T),
-            γ * (N / T),
-            ψ * β * (N / T),
-            β * (N / T))
+    return AddHawkes(μ * (N / T), γ * (N / T), ψ * β * (N / T), β * (N / T), model.f)
 end
 
-function rescaling!(model::AddHawkes, params::Parameters{4}, events::Times)
-    IP_transf, IP_T = rescaling(IP(I, model.f, model.∫f, model.∫If), (0.0, params.γ), events)
-    HH_T = rescaling!(HH(model.I), (params[1], parmas[3], params[4]), events)
-    events .+= IP_transf
-    return IP_T + HH_T
+function rescale(model::AddHawkes, tpp::TPP)
+    rescaled_AP = rescale(AddPoisson(model.μ, model.γ, model.f), tpp) # Rescale the f intensity
+    rescaled_HH = rescale(HHawkes(0.0, model.α, model.β), tpp) # Rescale the Hawkes intensity
+    return TPP(sort([rescaled_AP.times; rescaled_HH.times]), (0.0, rescaled_AP.region[2] + rescaled_HH.region[2]))
 end
 
-function CIF(model::AddHawkes, params::Parameters{4}, events::Times)
-    sort!(events)
+# TODO: Implement the integral
+function intensity(model::AddHawkes, tpp::TPP)
     function cif(t)
-        activation = t < events ? 0 : sum(exp.(params[3] .* (@view events[events .< t])))
-        return params[1] + (params[2] * model.f(t)) + (params[3] * activation / exp(params[4] * t))
+        activation = sum(exp.(model.α .* (@view tpp.times[1:findfirstsorted(tpp.times, t) - 1])))
+        return model.μ + (model.γ * model.f(t)) + (model.α * activation / exp(model.β * t))
     end
-    return cif
+    return DomainFunction(cif, tpp.region)
 end
 
-# function ∫CIF(params::ParametersIH,
-#                 rec::Record,
-#                 f::Interp)
-#     ∫base   = (params.μ * span(rec))
-#     ∫f      = (params.γ * ∫(f))
-#     ∫self   = (params.α / params.β) * sum(1 .- exp.(-params.β .* (rec.finish .- rec.events)))
-#     return ∫base + +∫f + ∫self
-# end
-
-function min_max_CIF(model::AddHawkes, params::Parameters{4}, events::Times)
-    M = 0
-    for i in eachindex(events)
-        temp = sum(exp.(-params[4] * (events[i] - events[1:i])))
-        M = (temp > M) ? temp : M
-    end
-    return params[1], params[1] + params[2] + (params[3] * M)
+function simulate!(model::AddHawkes, tpp::TPP, sim::Times)
+    N_base = simulate!(AddPoisson(model.μ, model.γ, model.f, model.f.integral), tpp.region, sim)
+    N_desc = generate_descendants!(sim, N_base, model.region[2], model.α, model.β)
+    return N_base + N_desc
 end
-
-
-
-# function simulate!(model::AddHawkes, params::Parameters{4}, events::Times)
-#     N_base = simulate!(IP(model.I, model.f, model.∫f, model.∫If), (params[1], params[2]), events)
-#     N_desc = generate_descendants!(events, N_base, model.I.b, params[3], params[4])
-#     return N_desc
-# end

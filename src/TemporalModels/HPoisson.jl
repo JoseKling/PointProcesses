@@ -1,25 +1,15 @@
-export HPoisson
+simulate(model::HPoisson, region::Interval) = TPP(simulate(model.μ, region), region)
 
-struct HPoisson <: ParametricTemporalModel
-    I::Interval
+estimate(::HPoisson, tpp::TPP) = HPoisson(length(tpp.times) / measure(tpp.region))
 
-    HPoisson(arg...) = new(convert_interval(arg...))
+rescale(model::HPoisson, tpp::TPP) = TPP(model.μ .* tpp.times, (0.0, measure(tpp.region) * model.μ))
+
+intensity(model::HPoisson, tpp::TPP) = DomainFunction(x -> model.μ, tpp.region, integral= x -> model.μ * (x[2] - x[1]))
+
+function simulate!(model::HPoisson, region::Interval, sim::Vector{Float64})
+    return simulate!(model.μ, region, sim)
 end
 
-simulate(model::HPoisson, params::Parameters{1}) = simulate(params[1], model.I)
-
-estimate(model::HPoisson, events::Times) = (length(events) / measure(model.I),)
-
-rescaling!(model::HPoisson, param::Parameters{1}, events::Times) =
-    rescaling!(param[1], events, model.I)
-
-CIF(model::HPoisson, params::Parameters{1}, _...) = x -> params[1]
-
-∫CIF(model::HPoisson, params::Parameters{1}, _...) = I -> params[1] * (I[2] - I[1])
-
-min_max_CIF(model::HPoisson, params::Parameters{1}, _...) = params[1], params[1]
-
-
-
-# simulate!(model::HPoisson, params::Parameters{1}, sim::Times) = 
-#     simulate!(params[1], model.I, sim)
+function rescale!(model::HPoisson, tpp::TPP, rescaled::Vector{Float64})
+    @. rescaled[1:length(tpp.times)] = model.μ * tpp.times
+end

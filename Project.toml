@@ -5,16 +5,20 @@ version = "1.0.0-DEV"
 
 [deps]
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+HCubature = "19dc6840-f33b-545b-b366-655c7e3ffd49"
 HypothesisTests = "09f84164-cd44-5f33-b23f-e6b0d136a0d5"
 Optim = "429524aa-4258-5aef-a3af-852621145aeb"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 
 [compat]
 Distributions = "0.25.120"
+HCubature = "1.7.0"
 HypothesisTests = "0.11.5"
 Optim = "1.12.0"
 Random = "1.11.0"
+StaticArrays = "1.9.13"
 StatsBase = "0.34.5"
 julia = "1.6.7"
 

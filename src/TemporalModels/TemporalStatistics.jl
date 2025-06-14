@@ -1,38 +1,21 @@
-#---------------- Kolmogorov-Smirnov distance ---------------------------------
-function statistic(model::ParametricTemporalModel, ::Type{KSExponential}, params::Parameters, events::Times)
-    (length(events) <= 2) && return 1.0 # If 'events' has only 2 elements, than there is only one event, so no interevent times
-    xs   = diff(rescaling!(model, params, events)[1])
-    vals = ecdf(xs)
-    d    = 0.0
-    @inbounds for i in eachindex(xs)
-        exp_cdf = 1.0 - exp.(-xs[i]) # The empirical CDF of the exponential distribution
-        d       = max(d, exp_cdf - vals[i], vals[i+1] - exp_cdf)
-    end
-    return d
-end
+export KSExponential, LPExponential, KSUniform
 
-#--------------- Laplace distance ---------------------------------------------
-function statistic(model::ParametricTemporalModel, ::Type{LPExponential}, params::Parameters, events::Times)
-    (length(events) <= 2) && return 1.0 # If 'events' has only 2 elements, than there is only one event, so no interevent times
-    rescaling!(model, params, events) # Transform the time of the events
-    X        = diff(events) # Calculate the interevent times)
-    sort!(X)
-    LIMIT    = 8.0
-    STEP     = 0.01
-    N        = Float64(length(X))
-    integral = 0.0
-    @inbounds for x in 0.0:STEP:LIMIT # The integral in approximated as a square function
-        integral += exp(-x) *
-                    ((sum(exp.(-X .* x)) / N) - # The empirical Laplace transform
-                    (1.0 / (1.0 + x)))^2.0 # The Laplace transform of the exponential distribution (λ / (s + λ))
-    end
-    return integral * STEP
+struct KSExponential <: Statistic end
+struct KSUniform     <: Statistic end
+struct LPExponential <: Statistic end
+
+# TODO: Reduce allocations
+#---------------- Kolmogorov-Smirnov distance ---------------------------------
+function statistic(model::ParametricModel, ::Type{KSExponential}, tpp::TPP)::Float64
+    (length(tpp.times) <= 2) && return 1.0 # If 'events' has only 2 elements, than there is only one event, so no interevent times
+    X = diff(rescale(model, tpp).times)
+    return KSDistance(X, x -> 1 - exp(-x)) # T is the mean of the interevent times
 end
 
 #--------------- Laplace distance 2 -------------------------------------------
-function statistic(model::ParametricTemporalModel, ::Type{LPExponential2}, params::Parameters, events::Times)
-    (length(events) <= 2) && return 1.0 # If 'events' has only 2 elements, than there is only one event, so no interevent times
-    X   = diff(rescaling!(model, params, events)[1])
+function statistic(model::ParametricModel, ::Type{LPExponential}, tpp::TPP)::Float64
+    (length(tpp.times) <= 2) && return 1.0 # If 'events' has only 2 elements, than there is only one event, so no interevent times
+    X   = diff(rescale(model, tpp).times)
     X ./= mean(X)
     XX  = X .+ X'
     N   = Float64(length(X))
@@ -42,29 +25,29 @@ function statistic(model::ParametricTemporalModel, ::Type{LPExponential2}, param
 end
 
 #--------------- KS uniform distance ---------------------------------------------
-function statistic(model::ParametricTemporalModel, ::Type{KSUniform}, params::Parameters, events::Times)
-    (length(events) <= 2) && return 1.0 # If 'events' has only 2 elements, than there is only one event, so no interevent times
-    T    = rescaling!(model, params, events)
-    N    = Float64(length(events))
-    xs   = diff(events)
-    vals = ecdf(xs)
-    d    = 0.0
-    @inbounds for i in eachindex(xs)
-        d = max(d, (xs[i] / T) - vals[i] , vals[i+1] - (xs[i] / T))
+function statistic(model::ParametricModel, ::Type{KSUniform}, tpp::TPP)::Float64
+    (length(tpp.times) <= 2) && return 1.0 # If 'events' has only 2 elements, than there is only one event, so no interevent times
+    rescaled = rescale(model, tpp)
+    return KSDistance(diff(rescaled.times), x -> x / rescaled.I[2]) # Calculate the empirical CDF
+end
+
+#---------------- Kolmogorov-Smirnov distance calculation -----------------------
+function KSDistance(X::Vector{Float64}, f)
+    N   = Float64(length(X))
+    i   = 1
+    val = 0.0
+    d   = 0.0
+    while true
+        lower = f(X[i]) - val
+        while i < N && X[i+1] == X[i]
+            i += 1
+        end
+        val = i / N
+        upper = val - f(X[i])
+        d = max(d, lower, upper)
+        i += 1
+        i >= N && break
     end
     return d
+
 end
-
-#--------------- ecdf --------------------------------------------------------
-function ecdf(X::AbstractVector{<:Real})
-    sort!(xs)
-    X = unique!(X)
-    N = length(X)
-    vals = zeros(length(X) + 1)
-    @inbounds for i in eachindex(X)
-        vals[i+1] = count(xs .<= X[i]) / N # Calculate the empirical CDF
-    end
-    return vals
-end
-
-

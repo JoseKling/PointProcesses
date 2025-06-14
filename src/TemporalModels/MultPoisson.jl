@@ -1,28 +1,20 @@
-export MultPoisson
-
-struct MultPoisson <: ParametricTemporalModel
-    I::Interval
-    f
-    ∫f
-    ∫If::Real
-
-    MultPoisson(args...) = initialize(args...)
+# TODO: Bug in simulation
+function simulate(model::MultPoisson, region::Interval)
+    mu_ip    = model.γ < 0.0 ? model.μ * exp(model.γ) : model.μ
+    gamma_ip = model.γ < 0.0 ? model.μ - mu_ip : model.μ * (exp(model.γ) - 1.0)
+    sim = simulate(mu_ip, region)
+    append!(sim, thinning(simulate(gamma_ip, region), CIF(model, (mu_ip, mu_ip + gamma_ip))))
+    sort!(sim)
+    return TPP(sim, region)
 end
 
-function simulate(model::MultPoisson, params::Parameters{2})
-    mu_ip    = params[2] < 0.0 ? params[1] * exp(params[2]) : params[1]
-    gamma_ip = params[2] < 0.0 ? params[1] - mu_ip : params[1] * (exp(params[2]) - 1.0)
-    return sort!([simulate(mu_ip, model.I);
-        thinning(simulate(gamma_ip, model.I), CIF(model, params), mu_ip, mu_ip + gamma_ip)])
-end
-
-function estimate(model::MultPoisson, events::Times)
-    isempty(events) && return (0.0, 0.0)
-    f_times = model.f.(events)
+function estimate(model::MultPoisson, tpp::TPP)
+    isempty(tpp.times) && return (0.0, 0.0)
+    f_times = model.f.(tpp.times)
     divs = 1000
     r = rand()
-    f_mesh = map(model.f, mesh(model.I, divs))
-    m = measure(model.I) / divs
+    f_mesh = map(model.f, mesh(tpp.region, divs))
+    m = measure(tpp.region) / divs
     initial_x = [r, 1 - r]
     lower     = [0.0, -Inf]
     upper     = [Inf, Inf]
@@ -33,7 +25,7 @@ function estimate(model::MultPoisson, events::Times)
                          upper,
                          initial_x,
                          IPNewton())
-    return (Optim.minimizer(results)[1], Optim.minimizer(results)[2])
+    return MultPoisson(Optim.minimizer(results)[1], Optim.minimizer(results)[2], model.f)
 end
 
 function objective_mp(x, f_times, f_mesh, m)
@@ -53,18 +45,4 @@ function hessian_mp!(storage, x, f_times, f_mesh, m)
     storage[2, 2] = x[1] * (m * sum((f_mesh.^2) .* exp.(x[2] .* f_mesh)))
 end
 
-# function rescaling!(model::MultPoisson, params::Parameters{2}, events::Times)
-#     hist_ext = [I.a; hist; I.b]
-#     xs = LinRange(I.a[1], I.b[1], 1000)
-#     ∫cif = integral(Proxy(xs, params.μ .* exp.(params.γ .* f(xs)), normalize=false))
-#     transf = ∫cif(hist_ext[2:end])
-#     return transf
-# end
-
-function CIF(model::MultPoisson, params::Parameters{2}, _...)
-    return x -> params[1] * exp(params[2] * model.f(x))
-end
-
-function ∫CIF(model::MultPoisson, params::Parameters{2})
-    return integral(CIF(model, params), d)
-end
+intensity(model::MultPoisson, tpp::TPP) = DomainFunction(x -> model.μ * exp(model.γ * model.f(x)), tpp.region)
